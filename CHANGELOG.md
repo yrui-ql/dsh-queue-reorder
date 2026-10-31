@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.1] - 2026-11-01
+
+### Fixed
+
+- Dragging a queued message near the top or bottom edge of a long queue now
+  auto-scrolls the list, with the scroll speed growing toward the edge. A message
+  can be dragged from the bottom to the top (or back) in one gesture instead of
+  releasing, scrolling, and grabbing it again.
+- The drop line follows the row under the pointer while the list scrolls beneath
+  it, so the insertion point stays correct during auto-scroll.
+
+### Changed
+
+- The drag handle's hint text now mentions edge auto-scroll.
+
 ## [0.1.0] - 2026-10-31
 
 ### Added
@@ -28,4 +43,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Requires the Harness `conversation.input.dock` slot and `conversation` service;
   a future Harness version that changes either needs a matching plugin update.
 
+[0.1.1]: https://github.com/yrui-ql/dsh-queue-reorder/releases/tag/v0.1.1
 [0.1.0]: https://github.com/yrui-ql/dsh-queue-reorder/releases/tag/v0.1.0

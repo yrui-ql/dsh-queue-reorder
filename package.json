@@ -1,6 +1,6 @@
 {
   "name": "dsh-queue-reorder",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Drag-to-reorder the DeepSeek Harness pending message queue before the messages are sent; keyboard reordering, editable and removable rows included.",
   "type": "module",

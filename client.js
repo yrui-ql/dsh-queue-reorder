@@ -31,6 +31,26 @@ window.__ModuleLoader__.load({
     const TEXT_FACTS = { collapseWhitespace: true, trimWhitespace: true }
 
     /**
+     * Drag auto-scroll: how close to a list edge (px) starts scrolling, and the
+     * per-frame travel at the edge and at the start of the hot zone. The queue
+     * list is short (180px), so a long queue needs this to be reachable while
+     * dragging from one end to the other.
+     */
+    const SCROLL_EDGE = 34
+    const SCROLL_MAX_STEP = 18
+    const SCROLL_MIN_STEP = 3
+
+    /**
+     * One frame of auto-scroll travel for a pointer this far from the edge.
+     * @param {number} distance - px from the list edge (negative outside it).
+     * @returns {number} px to add to scrollTop, always at least SCROLL_MIN_STEP.
+     */
+    function scrollStep(distance) {
+      const depth = Math.max(0, Math.min(SCROLL_EDGE, distance))
+      return Math.round(SCROLL_MIN_STEP + (SCROLL_MAX_STEP - SCROLL_MIN_STEP) * (1 - depth / SCROLL_EDGE))
+    }
+
+    /**
      * Dock styles. The layout half mirrors the shipped queue dock so the new
      * cell still stacks on the composer; the grip, drop line and editor styles
      * are this plugin's own.
@@ -47,7 +67,9 @@ window.__ModuleLoader__.load({
 .${P}count{min-width:0;font-family:Inter, var(--dsw-font-family);flex:auto;font-size:13px;font-weight:500;line-height:24px}
 .${P}hint{color:var(--dsw-alias-label-tertiary);flex:none;white-space:nowrap;font-size:12px;line-height:18px}
 .${P}chevron{width:14px;height:14px;color:var(--dsw-alias-label-tertiary);flex:none;place-items:center;display:grid}
-.${P}list{max-height:180px;margin:0;padding:0;list-style:none;overflow-y:auto}
+.${P}list{max-height:180px;margin:0;padding:0;list-style:none;overflow-y:auto;overscroll-behavior:contain}
+.${P}list[data-autoscroll="up"]{box-shadow:inset 0 18px 18px -18px var(--dsw-alias-brand-primary)}
+.${P}list[data-autoscroll="down"]{box-shadow:inset 0 -18px 18px -18px var(--dsw-alias-brand-primary)}
 .${P}row{box-sizing:border-box;border-radius:var(--dsw-radius-md);align-items:center;gap:10px;width:100%;min-height:36px;padding:4px 5px 4px 8px;display:flex;position:relative}
 .${P}row+.${P}row{box-shadow:inset 0 1px 0 var(--dsw-alias-border-l1)}
 .${P}row[data-dragging="yes"]{opacity:.4}
@@ -93,7 +115,7 @@ window.__ModuleLoader__.load({
       editFailed: '编辑失败：这条消息可能已经开始发送。',
       removeFailed: '删除失败：这条消息可能已经开始发送。',
       steerFailed: '插话发送失败，请重试。',
-      dragHint: '拖动调整发送顺序；聚焦后可用 ↑ ↓ Home End 移动',
+      dragHint: '拖动调整发送顺序（拖到上下边缘自动滚动）；聚焦后可用 ↑ ↓ Home End 移动',
       gripLabel: '第 {pos} 条，共 {total} 条：拖动或用方向键调整发送顺序',
       hint: '拖动 ⠿ 调整发送顺序',
       moved: '已调整顺序：这条消息现在是第 {pos} 条，共 {total} 条',
@@ -116,7 +138,7 @@ window.__ModuleLoader__.load({
       editFailed: 'Edit failed: this message may have already started sending.',
       removeFailed: 'Removal failed: this message may have already started sending.',
       steerFailed: 'Steering failed. Try again.',
-      dragHint: 'Drag to change send order; focus the grip and use ↑ ↓ Home End',
+      dragHint: 'Drag to change send order (auto-scrolls near the list edges); focus the grip and use ↑ ↓ Home End',
       gripLabel: 'Queued message {pos} of {total}: drag or use the arrow keys to reorder',
       hint: 'Drag ⠿ to reorder',
       moved: 'Order changed: this message is now number {pos} of {total}',
@@ -289,6 +311,10 @@ window.__ModuleLoader__.load({
       const [dropPos, setDropPos] = React.useState(null)
       const [live, setLive] = React.useState('')
       const dragRef = React.useRef(null)
+      const listRef = React.useRef(null)
+      const pointerRef = React.useRef({ x: null, y: null })
+      const scrollFrameRef = React.useRef(0)
+      const [autoScrollHint, setAutoScrollHint] = React.useState(null)
       const listId = React.useId ? React.useId() : 'dqr-queue-list'
       const hintId = (React.useId ? React.useId() : 'dqr-hint') + '-hint'
 
@@ -297,11 +323,91 @@ window.__ModuleLoader__.load({
         if (editing !== null && (!queueMutable || !queue.some((row) => row.id === editing.id))) setEditing(null)
       }, [collapsed, editing, queue, queueMutable, rowCount])
 
+      /** Cancel the auto-scroll frame and clear its edge affordance. */
+      const stopAutoScroll = React.useCallback(() => {
+        const frame = scrollFrameRef.current
+        scrollFrameRef.current = 0
+        if (frame !== 0 && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frame)
+        setAutoScrollHint((current) => (current === null ? current : null))
+      }, [])
+
       const clearDrag = React.useCallback(() => {
         dragRef.current = null
+        pointerRef.current = { x: null, y: null }
         setDragId(null)
         setDropPos(null)
+        stopAutoScroll()
+      }, [stopAutoScroll])
+
+      /** Move the drop marker onto whatever queue row currently sits under the pointer. */
+      const pointDropTarget = React.useCallback((list, x, y) => {
+        if (typeof document === 'undefined' || typeof document.elementFromPoint !== 'function') return
+        if (typeof x !== 'number' || typeof y !== 'number') return
+        const hit = document.elementFromPoint(x, y)
+        if (hit === null || hit === undefined || typeof hit.closest !== 'function') return
+        const row = hit.closest('[data-queue-index]')
+        if (row === null || row === undefined) return
+        if (typeof list.contains === 'function' && !list.contains(row)) return
+        const index = Number(row.dataset === undefined ? NaN : row.dataset.queueIndex)
+        if (!Number.isInteger(index) || index < 0) return
+        const rect = row.getBoundingClientRect()
+        const position = y > rect.top + rect.height / 2 ? index + 1 : index
+        setDropPos((current) => (current === position ? current : position))
       }, [])
+
+      /**
+       * Run one rAF loop for the duration of a drag. While the pointer is near
+       * the top or bottom edge of the scrollable list, scroll it by a speed that
+       * grows toward the edge; because the pointer may be stationary, the loop
+       * (not a dragover event) drives the scroll. Every scrolled frame also
+       * re-resolves the row under the pointer so the drop line stays correct
+       * while content moves underneath it.
+       */
+      const startAutoScroll = React.useCallback(() => {
+        if (typeof requestAnimationFrame !== 'function') return
+        if (scrollFrameRef.current !== 0) return
+        const tick = () => {
+          scrollFrameRef.current = 0
+          if (dragRef.current === null) {
+            setAutoScrollHint(null)
+            return
+          }
+          const list = listRef.current
+          if (list === null || list === undefined) {
+            setAutoScrollHint(null)
+            return
+          }
+          const rect = list.getBoundingClientRect()
+          const { x, y } = pointerRef.current
+          let direction = null
+          let step = 0
+          const scrollable = list.scrollHeight - list.clientHeight > 0
+          const overList = typeof x === 'number' && typeof y === 'number'
+            && x >= rect.left - 64 && x <= rect.right + 64
+          if (scrollable && overList) {
+            if (y < rect.top + SCROLL_EDGE) {
+              direction = 'up'
+              step = -scrollStep(y - rect.top)
+            } else if (y > rect.bottom - SCROLL_EDGE) {
+              direction = 'down'
+              step = scrollStep(rect.bottom - y)
+            }
+          }
+          if (step !== 0) {
+            const max = Math.max(0, list.scrollHeight - list.clientHeight)
+            const next = Math.max(0, Math.min(max, list.scrollTop + step))
+            if (next !== list.scrollTop) {
+              list.scrollTop = next
+              pointDropTarget(list, x, y)
+            }
+          }
+          setAutoScrollHint((current) => (current === direction ? current : direction))
+          scrollFrameRef.current = requestAnimationFrame(tick)
+        }
+        scrollFrameRef.current = requestAnimationFrame(tick)
+      }, [pointDropTarget])
+
+      React.useEffect(() => () => stopAutoScroll(), [stopAutoScroll])
 
       const applyAction = React.useCallback(async (itemId, action, failureText) => {
         setBusy(itemId)
@@ -461,6 +567,7 @@ window.__ModuleLoader__.load({
               onDragStart: (event) => {
                 dragRef.current = row.id
                 setDragId(row.id)
+                pointerRef.current = { x: event.clientX, y: event.clientY }
                 if (event.dataTransfer !== null && event.dataTransfer !== undefined) {
                   event.dataTransfer.effectAllowed = 'move'
                   event.dataTransfer.setData('text/plain', row.id)
@@ -529,6 +636,7 @@ window.__ModuleLoader__.load({
           rows.push(h('li', {
             key: row.id,
             className: P + 'row',
+            'data-queue-index': index,
             'data-dragging': dragId === row.id ? 'yes' : undefined,
             'data-drop': rowDrop,
             onDragOver: (event) => onDragOverRow(event, index),
@@ -573,7 +681,24 @@ window.__ModuleLoader__.load({
         })
       }
 
-      return h('div', { className: P + 'dock', 'data-queue-dock': '', 'data-queue-reorder': '' },
+      return h('div', {
+        className: P + 'dock',
+        'data-queue-dock': '',
+        'data-queue-reorder': '',
+        onDragOver: (event) => {
+          if (dragRef.current === null) return
+          pointerRef.current = { x: event.clientX, y: event.clientY }
+          event.preventDefault()
+          if (event.dataTransfer !== null && event.dataTransfer !== undefined) event.dataTransfer.dropEffect = 'move'
+          startAutoScroll()
+        },
+        onDragLeave: (event) => {
+          const next = event.relatedTarget
+          if (next !== null && next !== undefined && event.currentTarget.contains(next)) return
+          pointerRef.current = { x: null, y: null }
+          setAutoScrollHint(null)
+        },
+      },
         h('div', { className: P + 'panel' }, [
           rowCount > 1
             ? h('button', {
@@ -595,8 +720,16 @@ window.__ModuleLoader__.load({
           h('ul', {
             key: 'list',
             id: listId,
+            ref: listRef,
             className: P + 'list',
             hidden: !listVisible,
+            'data-dragging': dragId === null ? undefined : 'yes',
+            'data-autoscroll': autoScrollHint === null ? undefined : autoScrollHint,
+            onDragOver: (event) => {
+              if (dragRef.current === null) return
+              pointerRef.current = { x: event.clientX, y: event.clientY }
+              event.preventDefault()
+            },
             onDragLeave: (event) => {
               const next = event.relatedTarget
               if (next !== null && next !== undefined && event.currentTarget.contains(next)) return

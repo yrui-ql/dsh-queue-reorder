@@ -87,6 +87,35 @@ globalThis.window = {
 globalThis.document = {
   createElement: () => ({ dataset: {}, textContent: '', remove() {} }),
   head: { appendChild() {} },
+  elementFromPoint: () => null,
+}
+
+/* ---------- animation frame + DOM stand-ins ---------- */
+
+const frames = []
+let nextFrameId = 0
+globalThis.requestAnimationFrame = (callback) => {
+  nextFrameId += 1
+  frames.push({ id: nextFrameId, callback })
+  return nextFrameId
+}
+globalThis.cancelAnimationFrame = (id) => {
+  const index = frames.findIndex((frame) => frame.id === id)
+  if (index >= 0) frames.splice(index, 1)
+}
+function runFrame() {
+  const frame = frames.shift()
+  if (frame !== undefined) frame.callback()
+}
+/** A row stub for `document.elementFromPoint`. */
+function rowNode(index, top, height = 36) {
+  return {
+    dataset: { queueIndex: String(index) },
+    closest(selector) {
+      return selector === '[data-queue-index]' ? this : null
+    },
+    getBoundingClientRect: () => ({ top, bottom: top + height, height, left: 40, right: 300, width: 260 }),
+  }
 }
 
 await import(new URL('../client.js', import.meta.url).href)
@@ -189,12 +218,33 @@ const MESSAGES = [
   { id: 'm3', source: { kind: 'user', rpcId: 'r3' }, content: [{ type: 'text', text: 'third' }] },
 ]
 
-function createHarness(props) {
+function createHarness(props, domOverrides = {}) {
   hooks.length = 0
+  const dom = { scrollTop: 0, clientHeight: 60, scrollHeight: 60, ...domOverrides }
+  const listNode = {
+    get scrollTop() {
+      return dom.scrollTop
+    },
+    set scrollTop(value) {
+      dom.scrollTop = value
+    },
+    get clientHeight() {
+      return dom.clientHeight
+    },
+    get scrollHeight() {
+      return dom.scrollHeight
+    },
+    getBoundingClientRect: () => ({ top: 100, bottom: 160, height: 60, left: 40, right: 300, width: 260 }),
+    contains: () => true,
+  }
   const render = () => {
     hookIndex = 0
     effects = []
     const tree = entry.component(props)
+    for (const element of walk(tree)) {
+      const ref = element.props?.ref
+      if (ref !== null && typeof ref === 'object' && ref.current === null) ref.current = listNode
+    }
     const cleanups = []
     for (const effect of effects) {
       const cleanup = effect()
@@ -202,7 +252,7 @@ function createHarness(props) {
     }
     return tree
   }
-  return { props, render, cleanups: [] }
+  return { props, render, cleanups: [], dom, listNode }
 }
 
 async function flush() {
@@ -327,5 +377,74 @@ const pending = createHarness(makeProps([], {
 tree = pending.render()
 assert.equal(byClass(tree, 'dqr_row').filter((element) => element.type === 'li').length, 1)
 assert.ok(walk(tree).some((element) => element.props?.children === 'sending'), 'send-in-progress status is visible')
+
+/* ---------- drag auto-scroll for a long queue ---------- */
+
+const LONG = Array.from({ length: 8 }, (_, index) => ({
+  id: 'L' + index,
+  source: { kind: 'user', rpcId: 'lr' + index },
+  content: [{ type: 'text', text: 'message ' + index }],
+}))
+
+const auto = createHarness(makeProps(LONG), { scrollTop: 120, clientHeight: 60, scrollHeight: 320 })
+tree = expand(auto)
+const listEl = walk(tree).find((element) => typeof element.props?.className === 'string' && element.props.className.includes('dqr_list'))
+const listNode = listEl.props.ref.current
+assert.equal(listNode.scrollTop, 120)
+const dockEl = walk(tree).find((element) => element.props !== undefined && 'data-queue-dock' in element.props)
+const dragEvent = (clientX, clientY) => ({
+  clientX,
+  clientY,
+  preventDefault() {},
+  relatedTarget: null,
+  dataTransfer: null,
+})
+
+// Dragging upward near the top edge scrolls the list without pointer movement.
+const longGrips = byClass(tree, 'dqr_grip')
+// The frame loop starts on the first drag movement (a dragover), not on the
+// grab itself, so grabbing a row that happens to sit near an edge cannot scroll
+// the list before the user has moved.
+longGrips[0].props.onDragStart({
+  clientX: 120,
+  clientY: 130,
+  dataTransfer: { effectAllowed: '', setData() {} },
+})
+assert.equal(frames.length, 0, 'a grab alone does not start auto-scroll')
+
+dockEl.props.onDragOver(dragEvent(120, 108))
+assert.equal(frames.length, 1, 'the first drag movement starts the auto-scroll frame')
+globalThis.document.elementFromPoint = () => rowNode(0, 120)
+runFrame()
+assert.ok(listNode.scrollTop < 120, 'pointer near the top edge scrolls up')
+const scrolledOnce = listNode.scrollTop
+
+tree = auto.render()
+const autoList = walk(tree).find((element) => typeof element.props?.className === 'string' && element.props.className.includes('dqr_list'))
+assert.equal(autoList.props['data-autoscroll'], 'up')
+assert.equal(byClass(tree, 'dqr_row').filter((element) => element.props?.['data-drop'] === 'before').length, 1, 'drop marker follows the row under the pointer')
+
+// Repeated frames keep scrolling until the top, then stay clamped.
+while (listNode.scrollTop > 0 && frames.length > 0) runFrame()
+assert.equal(listNode.scrollTop, 0, 'top edge clamps at scrollTop 0')
+runFrame()
+assert.equal(listNode.scrollTop, 0)
+
+// The bottom edge scrolls the other way.
+dockEl.props.onDragOver(dragEvent(120, 154))
+runFrame()
+assert.ok(listNode.scrollTop > 0, 'pointer near the bottom edge scrolls down')
+
+// A pointer away from the list horizontally does not scroll.
+const beforeShift = listNode.scrollTop
+dockEl.props.onDragOver(dragEvent(900, 110))
+runFrame()
+assert.equal(listNode.scrollTop, beforeShift, 'auto-scroll ignores pointers outside the list width')
+
+// Dropping or ending the drag cancels the loop.
+longGrips[0].props.onDragEnd()
+assert.equal(frames.length, 0, 'drag end cancels the pending auto-scroll frame')
+
+globalThis.document.elementFromPoint = () => null
 
 console.log('queue reorder client: all assertions passed')
