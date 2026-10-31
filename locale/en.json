@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Queue reorder",
+    "description": "Drag queued messages (or focus a grip and use the arrow keys) to change the order in which pending messages are sent; editing, removal and steering are kept."
+  }
+}

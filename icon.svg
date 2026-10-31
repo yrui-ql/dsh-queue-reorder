@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Queue reorder">
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="#141B2E"/>
+  <rect x="16" y="15" width="26" height="8" rx="4" fill="#7C8BFF" opacity="0.9"/>
+  <rect x="16" y="28" width="32" height="8" rx="4" fill="#4E5FE0"/>
+  <rect x="16" y="41" width="22" height="8" rx="4" fill="#7C8BFF" opacity="0.55"/>
+  <g fill="#E6E9FF">
+    <circle cx="50" cy="19" r="2"/>
+    <circle cx="56" cy="19" r="2"/>
+    <circle cx="50" cy="32" r="2"/>
+    <circle cx="56" cy="32" r="2"/>
+    <circle cx="50" cy="45" r="2"/>
+    <circle cx="56" cy="45" r="2"/>
+  </g>
+  <path d="M9 19h3M9 32h3M9 45h3" stroke="#9AA6FF" stroke-width="2" stroke-linecap="round"/>
+</svg>

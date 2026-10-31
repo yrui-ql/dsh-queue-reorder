@@ -1,0 +1,60 @@
+{
+  "name": "dsh-queue-reorder",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Drag-to-reorder the DeepSeek Harness pending message queue before the messages are sent; keyboard reordering, editable and removable rows included.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "reorder.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  },
+  "scripts": {
+    "test": "node test/reorder.test.mjs && node test/host.test.mjs && node test/client-render.test.mjs"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "message-queue",
+    "drag-and-drop"
+  ],
+  "author": "yrui-ql",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yrui-ql/dsh-queue-reorder.git"
+  },
+  "homepage": "https://github.com/yrui-ql/dsh-queue-reorder#readme",
+  "bugs": {
+    "url": "https://github.com/yrui-ql/dsh-queue-reorder/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

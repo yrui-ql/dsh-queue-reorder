@@ -1,0 +1,7 @@
+# dsh-queue-reorder bundle patch: one insert over the profile root.
+# Host half registers the authenticated queue reorder route; the client half
+# replaces the shipped `queue` cell in `conversation.input.dock` with a dock
+# whose rows can be dragged (or moved with the keyboard) before they are sent.
+- insert:
+    - id: dsh-queue-reorder
+      name: 'dsh-queue-reorder'
